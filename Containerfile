@@ -1,6 +1,10 @@
 # Single image, single binary, many subcommands.
 
-FROM registry.access.redhat.com/ubi9/go-toolset:latest AS build
+# --platform=$BUILDPLATFORM pins the builder to the machine doing the build,
+# so a multi-arch build cross-compiles instead of running the Go toolchain
+# under emulation for the foreign architecture. That is only safe because
+# CGO_ENABLED=0 below makes the build a pure cross-compile.
+FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi9/go-toolset:latest AS build
 
 ARG VERSION=dev
 ARG COMMIT=

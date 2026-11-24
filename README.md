@@ -30,6 +30,25 @@ The image also installs busybox-style symlinks, so a Task can call
 - Tasks in `tekton/tasks/` map params to flags and nothing else — no
   `script:` blocks.
 
+## Published image
+
+`quay.io/project-lightpath/tssc-cli-tools`, built for `linux/amd64` and
+`linux/arm64`. CI publishes on every merge to `main` and on `v*` tags. Release
+tags must use the `vMAJOR.MINOR.PATCH` form, such as `v1.2.3`:
+
+| tag | meaning |
+|---|---|
+| `sha-<full-commit>-run-<run-id>-<attempt>` | one workflow attempt for a commit; unique across reruns and release events |
+| `latest` | newest `main` commit whose serialized promotion passed the freshness check |
+| `vX.Y.Z` | release tag for a `vMAJOR.MINOR.PATCH` push |
+
+Pin by digest in a Tekton Task rather than by tag — the digest is printed in
+the publish job's summary:
+
+```yaml
+image: quay.io/project-lightpath/tssc-cli-tools@sha256:...
+```
+
 ## Development
 
 ```
