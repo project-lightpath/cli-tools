@@ -37,7 +37,12 @@ func newSbomGenerateCmd() *cobra.Command {
 writing one CycloneDX 1.6 JSON SBOM per scan.
 
 The output format is not configurable: RHTPA accepts CycloneDX 1.6 or SPDX
-2.3 only, and syft's default of 1.5 leaves it with nothing to work with.`,
+2.3 only, and syft's default of 1.5 leaves it with nothing to work with.
+
+After an --oci-dir scan, the image's config labels are added to the SBOM as
+syft:image:labels:<name> metadata properties -- newer syft releases stopped
+writing them, and RHTPA reads org.opencontainers.image.source/revision from
+them.`,
 		Args: cobra.NoArgs,
 		PreRunE: func(cmd *cobra.Command, _ []string) error {
 			return bindEnv(cmd, map[string]string{
@@ -49,7 +54,17 @@ The output format is not configurable: RHTPA accepts CycloneDX 1.6 or SPDX
 			})
 		},
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runSbomGenerate(cmd, &o)
+			if err := runSbomGenerate(cmd, &o); err != nil {
+				return err
+			}
+			// Restore the image labels syft no longer writes into its
+			// CycloneDX output; see AddImageLabels.
+			if o.ociDir != "" {
+				if err := sbom.AddImageLabels(o.ociOut, o.ociDir); err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 	}
 
