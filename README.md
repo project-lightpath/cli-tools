@@ -46,13 +46,23 @@ tags must use the `vMAJOR.MINOR.PATCH` form, such as `v1.2.3`:
 | `sha-<full-commit>-run-<run-id>-<attempt>` | one workflow attempt for a commit; unique across reruns and release events |
 | `latest` | newest `main` commit whose serialized promotion passed the freshness check |
 | `vX.Y.Z` | release tag for a `vMAJOR.MINOR.PATCH` push |
+| `tools-*` | the tools variant (buildah + syft) the Tekton build and SBOM steps run; same tags with a `tools-` prefix |
 
-Pin by digest in a Tekton Task rather than by tag — the digest is printed in
-the publish job's summary:
+Pin by digest in a Tekton Task rather than by tag — the digests of both
+variants are printed in the publish job's summary:
 
 ```yaml
+# logic-only steps:
+image: quay.io/project-lightpath/tssc-cli-tools@sha256:...
+# build and SBOM steps (what the tssc-tasks chart pins):
 image: quay.io/project-lightpath/tssc-cli-tools@sha256:...
 ```
+
+The tools variant's syft comes from the Red Hat GA package on
+`registry.access.redhat.com` (`hi/syft`, component hummingbird), pinned by
+digest; that registry is anonymous, so builds need no registry credentials
+beyond the Quay push secret. Override `SYFT_IMAGE`/`SYFT_BIN` build args to
+use a different source (see the Containerfile).
 
 ## Published chart
 
@@ -74,4 +84,5 @@ its digest pin).
 make            # tidy, vet, test, build
 make test       # go test ./... -race
 make image      # podman build
+make image-tools # podman build --target tools (buildah + syft variant)
 ```

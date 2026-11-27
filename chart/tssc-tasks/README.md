@@ -20,6 +20,7 @@ Consume it pinned by version, for example with Helm:
       oci://quay.io/project-lightpath/tssc-tasks --version 0.1.0
 
 Or as a chart dependency from the consuming pattern's `Chart.yaml`. The task
-image defaults to `quay.io/project-lightpath/tssc-cli-tools:latest`; set
-`image.digest` to pin it to the exact digest printed in the release job's
-summary (the digest wins over the tag when both are set).
+image defaults to `quay.io/project-lightpath/tssc-cli-tools:tools-latest`
+(the buildah + syft variant); set `image.digest` to pin it to the exact
+digest printed in the release job's summary (the digest wins over the tag
+when both are set).

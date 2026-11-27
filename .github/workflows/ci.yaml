@@ -77,7 +77,9 @@ jobs:
       - uses: actions/checkout@v5
 
       # Build on PRs too: the Containerfile is part of the contract, and a
-      # broken one should not be discovered at release time.
+      # broken one should not be discovered at release time. Both targets:
+      # the default micro image, and the tools variant the Tekton build and
+      # SBOM steps run (its syft stage is the one most likely to break).
       - name: Build image
         run: |
           podman build \
@@ -85,8 +87,18 @@ jobs:
             --build-arg COMMIT="$(git rev-parse --short HEAD)" \
             -t tssc-cli-tools:ci -f Containerfile .
 
+      - name: Build tools image
+        run: |
+          podman build --target tools \
+            --build-arg TSSC_VERSION="$(git describe --tags --always --dirty)" \
+            --build-arg COMMIT="$(git rev-parse --short HEAD)" \
+            -t tssc-cli-tools:tools-ci -f Containerfile .
+
       - name: Smoke test
-        run: podman run --rm tssc-cli-tools:ci --version
+        run: |
+          podman run --rm tssc-cli-tools:ci --version
+          podman run --rm tssc-cli-tools:tools-ci --version
+          podman run --rm --entrypoint /usr/bin/syft tssc-cli-tools:tools-ci version
 
   # Publishing is a job of this workflow rather than a separate one so it can
   # depend on the quality gate directly. A standalone workflow would either
@@ -141,23 +153,27 @@ jobs:
             echo "tags=${tags}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Build multi-arch image
+      - name: Build multi-arch images
         env:
           TSSC_VERSION: ${{ steps.meta.outputs.version }}
           SHA: ${{ steps.meta.outputs.sha }}
           BUILD_TAG: ${{ steps.meta.outputs.build_tag }}
         run: |
           set -euo pipefail
-          # Both architectures cross-compile from the native builder, so this
-          # costs about as much as a single-arch build. See the
-          # --platform=$BUILDPLATFORM note in the Containerfile.
-          podman build \
-            --platform linux/amd64,linux/arm64 \
-            --manifest "${IMAGE}:${BUILD_TAG}" \
-            --build-arg TSSC_VERSION="${TSSC_VERSION}" \
-            --build-arg COMMIT="${SHA}" \
-            --build-arg DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          # Both architectures cross-compile from the native builder; see the
+          # --platform=$BUILDPLATFORM note in the Containerfile. The tools
+          # variant's syft comes from the anonymous registry.access.redhat.com,
+          # so the only registry credential needed is the Quay push secret.
+          common_args=(
+            --platform linux/amd64,linux/arm64
+            --build-arg TSSC_VERSION="${TSSC_VERSION}"
+            --build-arg COMMIT="${SHA}"
+            --build-arg DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             -f Containerfile .
+          )
+          podman build --manifest "${IMAGE}:${BUILD_TAG}" "${common_args[@]}"
+          podman build --manifest "${IMAGE}:tools-${BUILD_TAG}" --target tools \
+            "${common_args[@]}"
 
       - name: Log in to Quay
         env:
@@ -178,19 +194,25 @@ jobs:
             podman manifest push --all \
               --digestfile /tmp/digest \
               "${IMAGE}:${BUILD_TAG}" "docker://${IMAGE}:${tag}"
+            echo "pushing ${IMAGE}:tools-${tag}"
+            podman manifest push --all \
+              --digestfile /tmp/tools-digest \
+              "${IMAGE}:tools-${BUILD_TAG}" "docker://${IMAGE}:tools-${tag}"
           done
           {
             echo "### Published \`${IMAGE}\`"
             echo
-            echo "| field | value |"
-            echo "|---|---|"
-            echo "| digest | \`$(cat /tmp/digest)\` |"
-            echo "| tags | ${TAGS// /, } |"
-            echo "| arches | linux/amd64, linux/arm64 |"
+            echo "| variant | digest | tags |"
+            echo "|---|---|---|"
+            echo "| default (logic only) | \`$(cat /tmp/digest)\` | ${TAGS// /, } |"
+            echo "| tools (buildah + syft) | \`$(cat /tmp/tools-digest)\` | ${TAGS// /, } with \`tools-\` prefix |"
             echo
             echo "Pin by digest in a Tekton Task:"
             echo '```'
+            echo "# logic-only steps:"
             echo "image: ${IMAGE}@$(cat /tmp/digest)"
+            echo "# build and SBOM steps (what the tssc-tasks chart pins):"
+            echo "image: ${IMAGE}@$(cat /tmp/tools-digest)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -286,7 +308,10 @@ jobs:
           docker buildx imagetools create \
             --tag "${IMAGE}:latest" \
             "${IMAGE}:${SOURCE_TAG}"
-          echo "Promoted ${IMAGE}:${SOURCE_TAG} to ${IMAGE}:latest" >> "$GITHUB_STEP_SUMMARY"
+          docker buildx imagetools create \
+            --tag "${IMAGE}:tools-latest" \
+            "${IMAGE}:tools-${SOURCE_TAG}"
+          echo "Promoted ${IMAGE}:${SOURCE_TAG} to ${IMAGE}:latest (and its tools variant to tools-latest)" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Log out
         if: always()
