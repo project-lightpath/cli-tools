@@ -1,0 +1,64 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: upload-sbom-to-rhtpa
+  annotations:
+    tekton.dev/tags: "sbom, trustification"
+spec:
+  description: >-
+    Upload CycloneDX JSON SBOMs to RHTPA or Trustification.
+    The Secret supplies bombastic_api_url, oidc_issuer_url, oidc_client_id,
+    and oidc_client_secret. It can also supply supported_cyclonedx_version
+    and console_url.
+  params:
+    - name: COMPONENT_NAME
+      type: string
+      description: Component name to set in each uploaded SBOM
+    - name: SBOMS_DIR
+      type: string
+      default: "."
+      description: Directory to search recursively, relative to the sboms workspace
+    - name: HTTP_RETRIES
+      type: string
+      default: "3"
+      description: Number of retries after a transient HTTP failure
+    - name: TRUSTIFICATION_SECRET_NAME
+      type: string
+      default: trustification-secret
+      description: Name of the Secret containing authentication and configuration
+    - name: FAIL_IF_TRUSTIFICATION_NOT_CONFIGURED
+      type: string
+      default: "true"
+      description: Set to "false" to skip uploads when required Secret keys are missing or empty
+    - name: TSSC_CLI_IMAGE
+      type: string
+      default: quay.io/project-lightpath/tssc-cli-tools:latest
+      description: CLI image containing rhtpa upload-sbom, preferably pinned by digest
+  workspaces:
+    - name: sboms
+      description: Directory containing the SBOMs to upload
+      readOnly: true
+  results:
+    - name: TPA_SBOM_URL
+      description: Console URL for the last SBOM in digest order, or empty when no SBOMs were uploaded
+  volumes:
+    - name: trustification-secret
+      secret:
+        secretName: $(params.TRUSTIFICATION_SECRET_NAME)
+        optional: true
+  steps:
+    - name: upload-sboms
+      image: $(params.TSSC_CLI_IMAGE)
+      command: ["/usr/bin/tssc"]
+      args:
+        - rhtpa
+        - upload-sbom
+        - --component=$(params.COMPONENT_NAME)
+        - --sboms-dir=$(workspaces.sboms.path)/$(params.SBOMS_DIR)
+        - --http-retries=$(params.HTTP_RETRIES)
+        - --fail-if-not-configured=$(params.FAIL_IF_TRUSTIFICATION_NOT_CONFIGURED)
+        - --secret-dir=/run/secrets/trustification
+      volumeMounts:
+        - name: trustification-secret
+          mountPath: /run/secrets/trustification
+          readOnly: true

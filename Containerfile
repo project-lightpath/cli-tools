@@ -1,4 +1,4 @@
-# Single image, single binary, many subcommands.
+# Single CLI image for the TSSC pipeline tools.
 
 # --platform=$BUILDPLATFORM pins the builder to the machine doing the build,
 # so a multi-arch build cross-compiles instead of running the Go toolchain
@@ -35,11 +35,16 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
       -o /tmp/tssc ./cmd/tssc
 
 
+# The upload tasks use Syft 1.19.0 for optional CycloneDX conversion.
+# Pull the binary for the target architecture from its published image index.
+FROM docker.io/anchore/syft:v1.19.0@sha256:bc1ae555a43011d23bb011a4f50e175fc9a5984a008a3f8f2d692b211fcacd2a AS syft
+
 FROM registry.access.redhat.com/ubi9/ubi-micro:latest
 
 # go-toolset builds as a non-root user, which cannot create a directory at the
 # filesystem root, so the binary is written to /tmp rather than /out.
 COPY --from=build /tmp/tssc /usr/bin/tssc
+COPY --from=syft /syft /usr/bin/syft
 
 # Tekton overrides this, but a non-root default keeps the image usable under a
 # restricted SCC and matches what the pipeline's SecurityContext expects.
