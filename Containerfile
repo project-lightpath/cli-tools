@@ -1,5 +1,14 @@
 # Single image, single binary, many subcommands.
 
+# The syft stage's source image, overridable at build time. The default is
+# the Red Hat GA package from registry.access.redhat.com, which is
+# anonymous: no registry credentials are needed to build this image.
+# Digest-pinned; the :1 tag moves, so upgrades are deliberate digest bumps.
+# To use a different source:
+#
+#   --build-arg SYFT_IMAGE=docker.io/anchore/syft@sha256:... --build-arg SYFT_BIN=/syft
+ARG SYFT_IMAGE=registry.access.redhat.com/hi/syft@sha256:5b3d877d86564897888a31dc368abc3ff511406f8d75ada11f2e02bc1fd011be
+
 # --platform=$BUILDPLATFORM pins the builder to the machine doing the build,
 # so a multi-arch build cross-compiles instead of running the Go toolchain
 # under emulation for the foreign architecture. That is only safe because
@@ -39,33 +48,31 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
       -o /tmp/tssc ./cmd/tssc
 
 
-# Tools target: the same binary plus the tools the image and SBOM steps
-# need (buildah, syft). Build with `--target tools`; the default stage at
-# the bottom stays the slim micro image, so a step that only runs logic
-# never pulls buildah in. Stage order matters: the last stage is the
-# default.
+# Tools target: the binary plus buildah and syft, for the image build and
+# SBOM steps. The default stage at the bottom stays the slim micro image,
+# so a step that only runs logic never pulls buildah in.
 #
 # Root on purpose: buildah needs root plus the SETFCAP capability the
 # task's securityContext grants, and the CA-bundle setup writes under
 # /etc/pki. The micro stage below keeps USER 1001 for everything else.
-FROM registry.access.redhat.com/ubi9/ubi-minimal:latest AS tools-base
+#
+# ubi10, not ubi9: the Red Hat syft package is built against a RHEL 10
+# glibc and refuses to run on RHEL 9's.
+FROM registry.access.redhat.com/ubi10/ubi-minimal:latest AS tools-base
 
-# buildah and the CA trust tooling from the distro repo; the version is
-# pinned by the ubi9 release, one level below the digest pin the demo's
-# dedicated buildah image carried.
+# buildah and the CA trust tooling from the distro repo; versions follow
+# the ubi10 release.
 RUN microdnf install -y buildah ca-certificates p11-kit-trust \
     && microdnf clean all
 
-# syft, digest-pinned to the v1.19.0 multi-arch index. The demo ran the
-# Red Hat repackage of the same release (rh-syft-tech-preview/syft-rhel9
-# 1.19.0); pulling that registry needs credentials a plain build
-# environment does not have, so this stage uses the public upstream image
-# instead. Swap the reference back if the team prefers the RH distribution
-# and has registry.redhat.com pull access where images are built.
-FROM docker.io/anchore/syft@sha256:bc1ae555a43011d23bb011a4f50e175fc9a5984a008a3f8f2d692b211fcacd2a AS syft
+# syft, from the image selected by SYFT_IMAGE at the top of this file.
+FROM ${SYFT_IMAGE} AS syft
 
 FROM tools-base AS tools
-COPY --from=syft /syft /usr/bin/syft
+# The binary sits at /usr/bin/syft in the Red Hat image and /syft in the
+# public upstream one; SYFT_BIN points the copy at whichever source is in use.
+ARG SYFT_BIN=/usr/bin/syft
+COPY --from=syft ${SYFT_BIN} /usr/bin/syft
 COPY --from=build /tmp/tssc /usr/bin/tssc
 ENTRYPOINT ["/usr/bin/tssc"]
 
