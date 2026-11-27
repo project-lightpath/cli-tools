@@ -1,0 +1,9 @@
+apiVersion: v2
+name: tssc-tasks
+description: >-
+  Thin Tekton task wrappers around the tssc CLI. Task logic lives in the
+  binary (github.com/project-lightpath/cli-tools); these tasks only map
+  params to flags. No script blocks.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

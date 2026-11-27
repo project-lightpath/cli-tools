@@ -1,0 +1,12 @@
+# The tssc tools image: the Go binary plus buildah and syft (the Containerfile
+# `tools` target, published with the `tools-` tag prefix).
+#
+# The default is the moving `tools-latest` tag, for trying the chart out.
+# Pin by digest for anything real: each release's digests are printed in
+# the publish job's summary, and the digest wins over the tag when both
+# are set. Logic-only tasks (like tssc bump maven) can use the smaller
+# default image instead: same repository, tag without the tools- prefix.
+image:
+  repository: quay.io/project-lightpath/tssc-cli-tools
+  tag: "tools-latest"
+  digest: ""

@@ -36,20 +36,34 @@ tidy:
 lint:
 	golangci-lint run
 
+# Extra build args for the tools image's syft stage; see SYFT_IMAGE in the
+# Containerfile.
+SYFT_BUILD_ARGS ?=
+
 .PHONY: image
 image:
 	podman build \
-	  --build-arg VERSION=$(VERSION) \
+	  --build-arg TSSC_VERSION=$(VERSION) \
 	  --build-arg COMMIT=$(COMMIT) \
 	  --build-arg DATE=$(DATE) \
 	  -t $(IMAGE):$(VERSION) -f Containerfile .
+
+# The tools variant (buildah + syft + the binary) the Tekton tasks run.
+.PHONY: image-tools
+image-tools:
+	podman build --target tools \
+	  --build-arg TSSC_VERSION=$(VERSION) \
+	  --build-arg COMMIT=$(COMMIT) \
+	  --build-arg DATE=$(DATE) \
+	  $(SYFT_BUILD_ARGS) \
+	  -t $(IMAGE):tools-$(VERSION) -f Containerfile .
 
 # Tekton pulls this image on every TaskRun, so it needs both architectures the
 # cluster might schedule onto.
 .PHONY: image-multiarch
 image-multiarch:
 	podman build --platform linux/amd64,linux/arm64 --manifest $(IMAGE):$(VERSION) \
-	  --build-arg VERSION=$(VERSION) -f Containerfile .
+	  --build-arg TSSC_VERSION=$(VERSION) -f Containerfile .
 
 .PHONY: clean
 clean:
