@@ -1,0 +1,156 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: buildah-rhtap
+  labels:
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+    build.appstudio.redhat.com/build_type: "docker"
+  annotations:
+    tekton.dev/pipelines.minVersion: "0.12.1"
+    tekton.dev/tags: "containers, rhtap"
+spec:
+  description: |-
+    Builds source code into a container image with buildah and pushes it to
+    the registry, then generates and merges CycloneDX 1.6 SBOMs for the
+    source and the image.
+
+    The task is a thin wrapper: all logic (buildah invocation, syft scans,
+    SBOM merge) lives in the tssc binary from
+    github.com/project-lightpath/cli-tools, and each step below only maps
+    params to flags. Params and results match the buildah-rhtap task from
+    tssc-validated-pattern, so pipelines port over unchanged. The cosign
+    upload-sbom step of the original is not part of this task; registry-side
+    SBOM attachment belongs to the signing stories.
+  params:
+  - description: Reference of the image buildah will produce.
+    name: IMAGE
+    type: string
+  - default: ./Dockerfile
+    description: Path to the Dockerfile to build.
+    name: DOCKERFILE
+    type: string
+  - default: .
+    description: Path to the directory to use as context.
+    name: CONTEXT
+    type: string
+  - default: "true"
+    description: Verify the TLS on the registry endpoint (for push/pull to a non-TLS registry)
+    name: TLSVERIFY
+    type: string
+  - name: BUILD_ARGS
+    description: Array of --build-arg values ("arg=value" strings)
+    type: array
+    default: []
+  - name: BUILD_ARGS_FILE
+    description: Path to a file with build arguments, see https://www.mankier.com/1/buildah-build#--build-arg-file
+    type: string
+    default: ""
+  - name: STORAGE_DRIVER
+    description: Storage driver to configure for buildah
+    type: string
+    default: vfs
+  - name: SBOMS_DIR
+    description: Directory where the sbom will be saved
+    type: string
+    default: sboms
+  - name: LABELS
+    description: >-
+      Newline-separated "key=value" labels stamped onto the image with
+      --label. Blank lines are ignored.
+
+      A STRING rather than an array on purpose: BUILD_ARGS is already spread
+      over the step's positional arguments, and a second array parameter
+      would merge into the same list with no way to tell the two apart.
+
+      Set the two standard OCI source annotations here:
+
+        org.opencontainers.image.source=<git url>
+        org.opencontainers.image.revision=<commit sha>
+
+      syft reads image labels into the CycloneDX SBOM as
+      `syft:image:labels:<key>` properties under metadata.properties, which is
+      where RHTPA Exploit Intelligence looks for the source repository and
+      commit it needs to do call-chain analysis. Without them the SBOM
+      describes an image whose source EI cannot locate, and the analysis
+      cannot run. They also make the published image self-describing, which is
+      worth having regardless.
+    type: string
+    default: ""
+  results:
+  - description: Digest of the image just built
+    name: IMAGE_DIGEST
+  - description: Image repository and tag where the built image was pushed
+    name: IMAGE_URL
+  - description: Digests of the base images used for build
+    name: BASE_IMAGES_DIGESTS
+  - description: Link to the SBOM layer pushed to the registry as part of an OCI artifact.
+    name: SBOM_BLOB_URL
+  steps:
+  - name: build
+    image: {{ include "tssc-tasks.image" . }}
+    args:
+      - image
+      - build
+      - --image=$(params.IMAGE)
+      - --dockerfile=$(params.DOCKERFILE)
+      - --context=$(params.CONTEXT)
+      - --tls-verify=$(params.TLSVERIFY)
+      - --build-args-file=$(params.BUILD_ARGS_FILE)
+      - --labels=$(params.LABELS)
+      - --storage-driver=$(params.STORAGE_DRIVER)
+      - --source-dir=$(workspaces.source.path)/source
+      - --task-run-name=$(context.taskRun.name)
+      - --oci-dir=/tmp/files/image
+      - --digest-file=/tmp/files/image-digest
+      - "--"
+      - $(params.BUILD_ARGS[*])
+    securityContext:
+      capabilities:
+        add:
+          # this is needed so that buildah can write to the mounted /var/lib/containers directory
+          - SETFCAP
+    volumeMounts:
+    - mountPath: /var/lib/containers
+      name: varlibcontainers
+    - mountPath: /tmp/files
+      name: tmpfiles
+    workingDir: $(workspaces.source.path)
+
+  - name: generate-sboms
+    image: {{ include "tssc-tasks.image" . }}
+    # The tssc binary runs syft from the scanned source directory, so a
+    # repository's own .syft.yaml stays in effect
+    # (see https://github.com/anchore/syft/issues/2465).
+    args:
+      - sbom
+      - generate
+      - --dir=$(workspaces.source.path)/source
+      - --dir-output=/tmp/files/sbom-source.json
+      - --oci-dir=/tmp/files/image
+      - --oci-output=/tmp/files/sbom-image.json
+    volumeMounts:
+    - mountPath: /tmp/files
+      name: tmpfiles
+
+  - name: merge-sboms
+    image: {{ include "tssc-tasks.image" . }}
+    args:
+      - sbom
+      - merge
+      - --image-sbom=/tmp/files/sbom-image.json
+      - --source-sbom=/tmp/files/sbom-source.json
+      - --image=$(params.IMAGE)
+      - --output=/tmp/files/sbom-cyclonedx.json
+      - --sboms-dir=$(workspaces.source.path)/$(params.SBOMS_DIR)
+    volumeMounts:
+    - mountPath: /tmp/files
+      name: tmpfiles
+
+  volumes:
+  - emptyDir: {}
+    name: varlibcontainers
+  - emptyDir: {}
+    name: tmpfiles
+  workspaces:
+  - name: source
+    description: Workspace containing the source code to build.

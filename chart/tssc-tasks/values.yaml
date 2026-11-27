@@ -1,0 +1,12 @@
+# The tssc tools image: the Go binary plus buildah and syft (the Containerfile
+# `tools` target).
+#
+# The default is the moving `latest` tag, for trying the chart out. Pin by
+# digest for anything real -- the digest of each release is printed in the
+# publish job's summary on GitHub. A tag alone is a moving reference: a
+# TaskRun can resolve it to a different image than the one a previous run of
+# the same pipeline used. When both are set, the digest wins.
+image:
+  repository: quay.io/project-lightpath/tssc-cli-tools
+  tag: "latest"
+  digest: ""

@@ -39,7 +39,7 @@ lint:
 .PHONY: image
 image:
 	podman build \
-	  --build-arg VERSION=$(VERSION) \
+	  --build-arg TSSC_VERSION=$(VERSION) \
 	  --build-arg COMMIT=$(COMMIT) \
 	  --build-arg DATE=$(DATE) \
 	  -t $(IMAGE):$(VERSION) -f Containerfile .
@@ -49,7 +49,7 @@ image:
 .PHONY: image-multiarch
 image-multiarch:
 	podman build --platform linux/amd64,linux/arm64 --manifest $(IMAGE):$(VERSION) \
-	  --build-arg VERSION=$(VERSION) -f Containerfile .
+	  --build-arg TSSC_VERSION=$(VERSION) -f Containerfile .
 
 .PHONY: clean
 clean:

@@ -65,6 +65,11 @@ jobs:
 
       - uses: golangci/golangci-lint-action@v8
 
+      # The chart ships with the release, so a broken template should fail
+      # the same quality gate as broken Go code.
+      - uses: azure/setup-helm@v4
+      - run: helm lint chart/tssc-tasks
+
   image:
     runs-on: ubuntu-latest
     needs: [preflight, build]
@@ -76,7 +81,7 @@ jobs:
       - name: Build image
         run: |
           podman build \
-            --build-arg VERSION="$(git describe --tags --always --dirty)" \
+            --build-arg TSSC_VERSION="$(git describe --tags --always --dirty)" \
             --build-arg COMMIT="$(git rev-parse --short HEAD)" \
             -t tssc-cli-tools:ci -f Containerfile .
 
@@ -138,7 +143,7 @@ jobs:
 
       - name: Build multi-arch image
         env:
-          VERSION: ${{ steps.meta.outputs.version }}
+          TSSC_VERSION: ${{ steps.meta.outputs.version }}
           SHA: ${{ steps.meta.outputs.sha }}
           BUILD_TAG: ${{ steps.meta.outputs.build_tag }}
         run: |
@@ -149,7 +154,7 @@ jobs:
           podman build \
             --platform linux/amd64,linux/arm64 \
             --manifest "${IMAGE}:${BUILD_TAG}" \
-            --build-arg VERSION="${VERSION}" \
+            --build-arg TSSC_VERSION="${TSSC_VERSION}" \
             --build-arg COMMIT="${SHA}" \
             --build-arg DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             -f Containerfile .
@@ -188,6 +193,49 @@ jobs:
             echo "image: ${IMAGE}@$(cat /tmp/digest)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish Helm chart
+        # The chart is versioned in lockstep with the image: it is published
+        # on release tags only, and only when Chart.yaml already carries the
+        # version being released. Bump version and appVersion in Chart.yaml
+        # as part of the release.
+        if: needs.preflight.outputs.release_tag != ''
+        env:
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          chart_version="${RELEASE_TAG#v}"
+          declared="$(sed -n 's/^version:[[:space:]]*//p' chart/tssc-tasks/Chart.yaml)"
+          declared_app="$(sed -n 's/^appVersion:[[:space:]]*//p' chart/tssc-tasks/Chart.yaml | tr -d '"')"
+          if [[ "${declared}" != "${chart_version}" || "${declared_app}" != "${chart_version}" ]]; then
+            echo "Chart.yaml says version=${declared} appVersion=${declared_app}," >&2
+            echo "but the release tag is ${RELEASE_TAG}. Bump both to ${chart_version} before tagging." >&2
+            exit 1
+          fi
+
+          echo "$QUAY_TOKEN" | helm registry login quay.io -u "$QUAY_USERNAME" --password-stdin
+          chart_out="$(helm package chart/tssc-tasks)"
+          # helm push prints the ref with its digest; capture it for the
+          # summary so consumers can pin the chart, not just the image.
+          push_output="$(helm push "${chart_out}" oci://quay.io/project-lightpath)"
+          echo "${push_output}"
+          chart_ref="$(echo "${push_output}" | grep -o 'sha256:[0-9a-f]*')"
+          {
+            echo "### Published chart \`quay.io/project-lightpath/tssc-tasks\`"
+            echo
+            echo "| field | value |"
+            echo "|---|---|"
+            echo "| version | ${chart_version} |"
+            echo "| digest | \`${chart_ref}\` |"
+            echo
+            echo "Consume pinned by version:"
+            echo '```'
+            echo "helm pull oci://quay.io/project-lightpath/tssc-tasks --version ${chart_version}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          helm registry logout quay.io
 
       - name: Log out
         if: always()

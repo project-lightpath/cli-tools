@@ -11,9 +11,13 @@ built as one Go binary in one container image.
 cmd/tssc/            single entrypoint
 internal/
   cli/               subcommand wiring, flag surface, env fallbacks
+  imagebuild/        buildah invocation marshalling (tssc image build)
+  imageref/          image-reference syntax shared by the subcommands
+  maven/             pom parsing for tssc bump maven
+  sbom/              syft runs and CycloneDX merging (tssc sbom ...)
   tekton/            result files, CA bundle
   version/           build metadata stamped in by the linker
-tekton/tasks/        thin Task wrappers that exec the binary
+chart/tssc-tasks/    Helm chart: thin Task wrappers that exec the binary
 ```
 
 The image also installs busybox-style symlinks, so a Task can call
@@ -27,8 +31,9 @@ The image also installs busybox-style symlinks, so a Task can call
   per command.
 - Tekton results are written to `/tekton/results` when it exists, and
   skipped otherwise.
-- Tasks in `tekton/tasks/` map params to flags and nothing else — no
-  `script:` blocks.
+- Task wrappers map params to flags and nothing else — no `script:` blocks.
+  They live as chart templates in `chart/tssc-tasks/`, one source of truth,
+  rather than as loose YAML next to a separate chart copy.
 
 ## Published image
 
@@ -48,6 +53,20 @@ the publish job's summary:
 ```yaml
 image: quay.io/project-lightpath/tssc-cli-tools@sha256:...
 ```
+
+## Published chart
+
+The Task wrappers ship as the [`tssc-tasks`][chart] Helm chart, published as
+an OCI artifact to `quay.io/project-lightpath/tssc-tasks` on `v*` tags,
+versioned in lockstep with the image (CI refuses a release whose tag does not
+match `Chart.yaml`). Consume it pinned by version, e.g.:
+
+    helm pull oci://quay.io/project-lightpath/tssc-tasks --version 0.1.0
+
+See `chart/tssc-tasks/README.md` for the values (the task image reference and
+its digest pin).
+
+[chart]: chart/tssc-tasks/
 
 ## Development
 

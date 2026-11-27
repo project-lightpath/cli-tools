@@ -12,8 +12,13 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/project-lightpath/cli-tools/internal/tekton"
 	"github.com/project-lightpath/cli-tools/internal/version"
 )
+
+// resultsDir holds the --results-dir flag for the subcommands, which write
+// Tekton results through newResults.
+var resultsDir string
 
 // NewRootCmd builds the command tree.
 func NewRootCmd() *cobra.Command {
@@ -26,13 +31,20 @@ func NewRootCmd() *cobra.Command {
 		SilenceErrors: true,
 	}
 
-	root.PersistentFlags().String("results-dir", "",
+	root.PersistentFlags().StringVar(&resultsDir, "results-dir", "",
 		"directory to write Tekton results into (default: /tekton/results when it exists, otherwise results are not written)")
 
 	root.AddCommand(
 		newBumpCmd(),
+		newImageCmd(),
+		newSbomCmd(),
 	)
 	return root
+}
+
+// newResults wires the --results-dir flag into the Tekton result writer.
+func newResults() *tekton.Results {
+	return tekton.NewResults(resultsDir)
 }
 
 // Execute runs the command tree, dispatching on argv[0] first so the image can
