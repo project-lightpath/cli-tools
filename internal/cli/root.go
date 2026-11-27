@@ -31,6 +31,7 @@ func NewRootCmd() *cobra.Command {
 
 	root.AddCommand(
 		newBumpCmd(),
+		newRHTPACmd(),
 	)
 	return root
 }
